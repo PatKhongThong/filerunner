@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GameVault — Local Game Launcher</title>
+  <meta name="description" content="Run any HTML5 game directly from your Chromebook — no upload, no install." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Reset & Tokens ───────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:            #06060f;
+      --surface:       rgba(255,255,255,0.035);
+      --surface-hover: rgba(255,255,255,0.06);
+      --border:        rgba(255,255,255,0.08);
+      --border-bright: rgba(255,255,255,0.14);
+      --grad-a:        #7c3aed;
+      --grad-b:        #06b6d4;
+      --text:          #e2e8f0;
+      --text-2:        #94a3b8;
+      --text-3:        #475569;
+      --success:       #34d399;
+      --danger:        #f87171;
+      --warn:          #fbbf24;
+      --radius:        12px;
+      --font:          'Inter', system-ui, sans-serif;
+      --mono:          'JetBrains Mono', monospace;
+      --sidebar-w:     280px;
+      --bar-h:         56px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+
+    /* ── Scrollbar ────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 99px; }
+
+    /* ── Top Bar ──────────────────────────────────────── */
+    #top-bar {
+      position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 20px;
+      background: rgba(6,6,15,0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em;
+      background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      user-select: none;
+    }
+    .logo svg { flex-shrink: 0; }
+
+    #status-pill {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 0.78rem; color: var(--text-2);
+    }
+    #status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--warn);
+      transition: background .3s;
+      box-shadow: 0 0 0 2px rgba(251,191,36,.25);
+    }
+    #status-dot.ready  { background: var(--success); box-shadow: 0 0 0 2px rgba(52,211,153,.25); }
+    #status-dot.error  { background: var(--danger);  box-shadow: 0 0 0 2px rgba(248,113,113,.25); }
+
+    .spacer { flex: 1; }
+
+    #open-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 18px;
+      background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+      color: #fff; font-family: var(--font); font-weight: 600; font-size: 0.85rem;
+      border: none; border-radius: 9px; cursor: pointer;
+      transition: opacity .2s, transform .15s;
+      outline: none;
+    }
+    #open-btn:hover  { opacity: .88; transform: translateY(-1px); }
+    #open-btn:active { opacity: 1;   transform: scale(.97); }
+    #open-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+    /* ── Layout ───────────────────────────────────────── */
+    #layout {
+      position: fixed; top: var(--bar-h); left: 0; right: 0; bottom: 0;
+      display: flex;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    #sidebar-head {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    #folder-name {
+      font-size: 0.8rem; font-weight: 600; color: var(--text-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    #file-tree {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 8px 0;
+    }
+
+    /* ── Tree Nodes ───────────────────────────────────── */
+    .tree-node { user-select: none; }
+    .tree-row {
+      display: flex; align-items: center; gap: 0;
+      padding: 5px 0; cursor: pointer;
+      border-radius: 7px;
+      transition: background .12s;
+      position: relative;
+    }
+    .tree-row:hover { background: var(--surface-hover); }
+    .tree-row.active { background: rgba(124,58,237,.18); }
+    .tree-row.active::before {
+      content: ''; position: absolute; left: 0; top: 4px; bottom: 4px;
+      width: 2px; border-radius: 0 2px 2px 0;
+      background: var(--grad-a);
+    }
+
+    .tree-indent { flex-shrink: 0; }
+    .tree-chevron {
+      width: 20px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-3); font-size: 0.65rem;
+      transition: transform .2s;
+    }
+    .tree-chevron.open { transform: rotate(90deg); }
+    .tree-icon { flex-shrink: 0; font-size: 1rem; line-height: 1; }
+    .tree-label {
+      flex: 1; font-family: var(--mono); font-size: 0.775rem;
+      color: var(--text-2); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+      padding-right: 12px; padding-left: 5px;
+    }
+    .tree-label.playable { color: var(--text); font-weight: 500; }
+
+    .tree-children { display: none; }
+    .tree-children.open { display: block; }
+
+    /* ── Sidebar empty state ──────────────────────────── */
+    #sidebar-empty {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px; padding: 24px; text-align: center;
+    }
+    #sidebar-empty .icon { font-size: 2.5rem; opacity: .4; }
+    #sidebar-empty p { font-size: 0.78rem; color: var(--text-3); line-height: 1.5; }
+
+    /* ── Content Area ─────────────────────────────────── */
+    #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Welcome / No-game State ──────────────────────── */
+    #welcome {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 24px; text-align: center; padding: 40px;
+    }
+
+    .welcome-glow {
+      position: relative; display: flex; align-items: center; justify-content: center;
+    }
+    .welcome-glow .glow-ring {
+      position: absolute; width: 120px; height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(124,58,237,.35) 0%, transparent 70%);
+      animation: pulse 3s ease-in-out infinite;
+    }
+    .welcome-glow .icon { font-size: 4rem; position: relative; z-index: 1; filter: drop-shadow(0 0 20px var(--grad-a)); }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1);   opacity: .7; }
+      50%       { transform: scale(1.2); opacity: 1;  }
+    }
+
+    #welcome h1 {
+      font-size: 2rem; font-weight: 700; letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #fff 0%, var(--text-2) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    #welcome .sub { font-size: 0.95rem; color: var(--text-2); max-width: 380px; line-height: 1.6; }
+
+    .steps {
+      display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+      max-width: 560px;
+    }
+    .step {
+      flex: 1; min-width: 150px; max-width: 175px;
+      padding: 18px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      text-align: left;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .step:hover { border-color: var(--border-bright); box-shadow: 0 4px 24px rgba(124,58,237,.15); }
+    .step .num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 7px;
+      background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+      font-size: 0.7rem; font-weight: 700; color: #fff; margin-bottom: 10px;
+    }
+    .step h3 { font-size: 0.82rem; font-weight: 600; margin-bottom: 4px; }
+    .step p  { font-size: 0.73rem; color: var(--text-2); line-height: 1.5; }
+
+    .compat-badge {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px; border-radius: 99px;
+      background: var(--surface); border: 1px solid var(--border);
+      font-size: 0.75rem; color: var(--text-2);
+    }
+
+    /* ── Game Runner ──────────────────────────────────── */
+    #game-runner { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    #game-toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px;
+      height: 44px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    #game-title {
+      flex: 1; font-family: var(--mono); font-size: 0.8rem; color: var(--text-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .toolbar-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 8px; border: none;
+      background: var(--surface-hover); color: var(--text-2); cursor: pointer;
+      font-size: 0.9rem; transition: background .15s, color .15s;
+      flex-shrink: 0;
+    }
+    .toolbar-btn:hover { background: rgba(255,255,255,.1); color: var(--text); }
+    .toolbar-btn.danger:hover { background: rgba(248,113,113,.15); color: var(--danger); }
+
+    #game-frame {
+      flex: 1; width: 100%; height: 100%;
+      border: none;
+      background: #000;
+    }
+
+    /* ── Loading Overlay ──────────────────────────────── */
+    #loading-overlay {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; z-index: 9999;
+      transition: opacity .4s;
+    }
+    #loading-overlay .spinner {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 3px solid var(--border);
+      border-top-color: var(--grad-a);
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-overlay p { font-size: 0.85rem; color: var(--text-2); }
+
+    /* ── No-support Banner ────────────────────────────── */
+    #no-support {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; text-align: center; padding: 32px; z-index: 9999;
+    }
+    #no-support h2 { font-size: 1.4rem; color: var(--danger); }
+    #no-support p { color: var(--text-2); max-width: 400px; line-height: 1.6; font-size: .9rem; }
+
+    /* ── Toast ────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      padding: 10px 20px; border-radius: 10px;
+      background: rgba(30,30,50,0.95); border: 1px solid var(--border-bright);
+      color: var(--text); font-size: 0.83rem; font-weight: 500;
+      backdrop-filter: blur(12px);
+      transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+      opacity: 0; z-index: 9000; pointer-events: none; white-space: nowrap;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+    /* ── Progress bar ─────────────────────────────────── */
+    #load-progress {
+      position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000;
+      background: transparent;
+    }
+    #load-progress-bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--grad-a), var(--grad-b));
+      transition: width 0.2s ease;
+      border-radius: 0 2px 2px 0;
+      box-shadow: 0 0 10px var(--grad-a);
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <p>Initializing GameVault…</p>
+</div>
+
+<!-- No support fallback -->
+<div id="no-support">
+  <div style="font-size:3rem">😞</div>
+  <h2>Browser Not Supported</h2>
+  <p>GameVault requires the <strong>File System Access API</strong>. Please use <strong>Chrome 86+</strong> or <strong>Microsoft Edge 86+</strong> on desktop.</p>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Progress bar -->
+<div id="load-progress"><div id="load-progress-bar"></div></div>
+
+<!-- Top Bar -->
+<div id="top-bar">
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#7c3aed"/>
+          <stop offset="100%" stop-color="#06b6d4"/>
+        </linearGradient>
+      </defs>
+      <rect x="2" y="6" width="20" height="14" rx="4" fill="url(#lg)" opacity=".9"/>
+      <circle cx="8.5" cy="13" r="1.2" fill="white"/>
+      <circle cx="11.5" cy="11" r="1.2" fill="white"/>
+      <circle cx="11.5" cy="15" r="1.2" fill="white"/>
+      <circle cx="14.5" cy="13" r="1.2" fill="white"/>
+      <rect x="9" y="3" width="6" height="3" rx="1.5" fill="url(#lg)" opacity=".7"/>
+    </svg>
+    GameVault
+  </div>
+
+  <div id="status-pill">
+    <div id="status-dot"></div>
+    <span id="status-text">Starting…</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <button id="open-btn" disabled>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+    </svg>
+    Open Folder
+  </button>
+</div>
+
+<!-- Main Layout -->
+<div id="layout">
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div id="sidebar-head">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--grad-a)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span id="folder-name">No folder selected</span>
+    </div>
+
+    <div id="sidebar-empty">
+      <div class="icon">📁</div>
+      <p>Click <strong>Open Folder</strong> to browse your game files</p>
+    </div>
+
+    <div id="file-tree" style="display:none"></div>
+  </aside>
+
+  <!-- Content -->
+  <div id="content">
+
+    <!-- Welcome -->
+    <div id="welcome">
+      <div class="welcome-glow">
+        <div class="glow-ring"></div>
+        <div class="icon">🎮</div>
+      </div>
+      <h1>GameVault</h1>
+      <p class="sub">Run any HTML5 game directly from your device — no upload, no install required.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="num">1</div>
+          <h3>Open Folder</h3>
+          <p>Pick your game's root folder from your device.</p>
+        </div>
+        <div class="step">
+          <div class="num">2</div>
+          <h3>Browse Files</h3>
+          <p>See all game files in the sidebar tree.</p>
+        </div>
+        <div class="step">
+          <div class="num">3</div>
+          <h3>Launch Game</h3>
+          <p>Double-click any <strong>.html</strong> file to run it.</p>
+        </div>
+      </div>
+
+      <div class="compat-badge">
+        <span>✅</span> Optimised for Chrome & Chromebook
+      </div>
+    </div>
+
+    <!-- Game Runner (hidden initially) -->
+    <div id="game-runner" style="display:none">
+      <div id="game-toolbar">
+        <span id="game-title">No game loaded</span>
+        <button class="toolbar-btn" id="refresh-btn" title="Reload game (R)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
+        <button class="toolbar-btn" id="fullscreen-btn" title="Fullscreen (F)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+            <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+        <button class="toolbar-btn danger" id="close-btn" title="Close game">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <iframe id="game-frame"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-modals allow-forms"
+        allow="autoplay; fullscreen; pointer-lock; web-share"
+        allowfullscreen>
+      </iframe>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /layout -->
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   GameVault — Main App Logic (No Service Worker)
+   Uses Blob URLs to serve game files directly in-memory.
+   ═══════════════════════════════════════════════════════ */
+
+const $ = id => document.getElementById(id);
+
+// ── State ─────────────────────────────────────────────────
+let rootHandle   = null;
+let activeRow    = null;
+let currentGame  = null;
+let blobURLs     = [];       // track blob URLs for cleanup
+
+// ── DOM refs ──────────────────────────────────────────────
+const loadingOverlay = $('loading-overlay');
+const noSupport      = $('no-support');
+const statusDot      = $('status-dot');
+const statusText     = $('status-text');
+const openBtn        = $('open-btn');
+const folderName     = $('folder-name');
+const sidebarEmpty   = $('sidebar-empty');
+const fileTree       = $('file-tree');
+const welcome        = $('welcome');
+const gameRunner     = $('game-runner');
+const gameTitle      = $('game-title');
+const gameFrame      = $('game-frame');
+const progressBar    = $('load-progress-bar');
+
+// ── Support check ─────────────────────────────────────────
+const hasFS = ('showDirectoryPicker' in window);
+
+if (!hasFS) {
+  loadingOverlay.style.display = 'none';
+  noSupport.style.display = 'flex';
+} else {
+  // No SW needed — ready immediately
+  setStatus('ready', 'Ready');
+  openBtn.disabled = false;
+  hideSplash();
+}
+
+function hideSplash() {
+  loadingOverlay.style.opacity = '0';
+  setTimeout(() => loadingOverlay.style.display = 'none', 400);
+}
+
+function setStatus(type, text) {
+  statusDot.className = type;
+  statusText.textContent = text;
+}
+
+// ── MIME types ─────────────────────────────────────────────
+function getMimeType(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return ({
+    html: 'text/html; charset=utf-8',
+    htm:  'text/html; charset=utf-8',
+    js:   'application/javascript',
+    mjs:  'application/javascript',
+    css:  'text/css',
+    json: 'application/json',
+    xml:  'application/xml',
+    png:  'image/png',
+    jpg:  'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif:  'image/gif',
+    svg:  'image/svg+xml',
+    webp: 'image/webp',
+    ico:  'image/x-icon',
+    bmp:  'image/bmp',
+    mp3:  'audio/mpeg',
+    ogg:  'audio/ogg',
+    wav:  'audio/wav',
+    flac: 'audio/flac',
+    aac:  'audio/aac',
+    m4a:  'audio/mp4',
+    mp4:  'video/mp4',
+    webm: 'video/webm',
+    ogv:  'video/ogg',
+    wasm: 'application/wasm',
+    ttf:  'font/ttf',
+    otf:  'font/otf',
+    woff: 'font/woff',
+    woff2:'font/woff2',
+    txt:  'text/plain',
+    csv:  'text/csv',
+    data: 'application/octet-stream',
+    bin:  'application/octet-stream',
+  })[ext] ?? 'application/octet-stream';
+}
+
+// ── Read all files recursively from a directory handle ─────
+async function readAllFiles(dirHandle, basePath = '', fileMap = {}, progress = { count: 0 }) {
+  try {
+    for await (const [name, handle] of dirHandle.entries()) {
+      const path = basePath ? `${basePath}/${name}` : name;
+      if (handle.kind === 'file') {
+        try {
+          const file = await handle.getFile();
+          fileMap[path] = file;
+          progress.count++;
+          if (progress.count % 10 === 0) {
+            statusText.textContent = `Reading files… (${progress.count})`;
+          }
+        } catch (e) {
+          console.warn('[GameVault] Could not read file:', path, e);
+        }
+      } else if (handle.kind === 'directory') {
+        await readAllFiles(handle, path, fileMap, progress);
+      }
+    }
+  } catch (e) {
+    console.warn('[GameVault] Could not read directory:', basePath, e);
+  }
+  return fileMap;
+}
+
+// ── Build blob URL map from file map ──────────────────────
+function buildBlobURLMap(fileMap) {
+  const map = {};
+  for (const [path, file] of Object.entries(fileMap)) {
+    const mime = getMimeType(path);
+    const blob = new Blob([file], { type: mime });
+    const url = URL.createObjectURL(blob);
+    map[path] = url;
+    blobURLs.push(url);
+  }
+  return map;
+}
+
+// ── Clean up blob URLs ────────────────────────────────────
+function cleanupBlobURLs() {
+  for (const url of blobURLs) {
+    URL.revokeObjectURL(url);
+  }
+  blobURLs = [];
+}
+
+// ── Resolve a relative path from a base path ─────────────
+function resolvePath(from, to) {
+  if (to.startsWith('/') || to.startsWith('http://') || to.startsWith('https://') || to.startsWith('data:') || to.startsWith('blob:') || to.startsWith('#') || to.startsWith('javascript:')) {
+    return null; // absolute or special — skip
+  }
+  // Get directory of "from"
+  const parts = from.split('/');
+  parts.pop(); // remove filename
+  const toParts = to.split('/');
+  for (const seg of toParts) {
+    if (seg === '..') parts.pop();
+    else if (seg !== '.' && seg !== '') parts.push(seg);
+  }
+  return parts.join('/');
+}
+
+// ── Rewrite HTML to use blob URLs ─────────────────────────
+async function buildGameBlob(htmlPath, fileMap, blobMap) {
+  const htmlFile = fileMap[htmlPath];
+  if (!htmlFile) return null;
+
+  let html = await htmlFile.text();
+
+  // Rewrite src="...", href="...", url("..."), url('...') references
+  // We need to resolve relative paths from the HTML file's location
+  html = html.replace(
+    /(src|href|poster|data|action)\s*=\s*["']([^"']*?)["']/gi,
+    (match, attr, value) => {
+      const resolved = resolvePath(htmlPath, value);
+      if (resolved && blobMap[resolved]) {
+        return `${attr}="${blobMap[resolved]}"`;
+      }
+      return match;
+    }
+  );
+
+  // Rewrite url() in CSS (both inline styles and <style> blocks)
+  html = html.replace(
+    /url\(\s*["']?([^"')]+?)["']?\s*\)/gi,
+    (match, value) => {
+      const resolved = resolvePath(htmlPath, value);
+      if (resolved && blobMap[resolved]) {
+        return `url("${blobMap[resolved]}")`;
+      }
+      return match;
+    }
+  );
+
+  // Inject a helper script that overrides fetch() and XMLHttpRequest
+  // so dynamically loaded resources also resolve from our blob map
+  const helperScript = `
+<script>
+(function() {
+  const __blobMap = ${JSON.stringify(blobMap)};
+  const __htmlDir = ${JSON.stringify(htmlPath.split('/').slice(0, -1).join('/'))};
+
+  function __resolve(url) {
+    if (!url || url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('//')) return null;
+    // Remove leading ./
+    url = url.replace(/^\\.\\//g, '');
+    const parts = __htmlDir ? __htmlDir.split('/') : [];
+    const segs = url.split('/');
+    for (const s of segs) {
+      if (s === '..') parts.pop();
+      else if (s !== '.' && s !== '') parts.push(s);
+    }
+    return parts.join('/');
+  }
+
+  // Override fetch
+  const _origFetch = window.fetch;
+  window.fetch = function(input, init) {
+    const url = (typeof input === 'string') ? input : (input && input.url) || '';
+    const resolved = __resolve(url);
+    if (resolved && __blobMap[resolved]) {
+      return _origFetch.call(window, __blobMap[resolved], init);
+    }
+    return _origFetch.call(window, input, init);
+  };
+
+  // Override XMLHttpRequest
+  const _origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    const resolved = __resolve(url);
+    if (resolved && __blobMap[resolved]) {
+      return _origOpen.call(this, method, __blobMap[resolved], ...rest);
+    }
+    return _origOpen.call(this, method, url, ...rest);
+  };
+
+  // Override dynamic script/img/link creation
+  const _origSetAttr = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function(name, value) {
+    if ((name === 'src' || name === 'href') && typeof value === 'string') {
+      const resolved = __resolve(value);
+      if (resolved && __blobMap[resolved]) {
+        return _origSetAttr.call(this, name, __blobMap[resolved]);
+      }
+    }
+    return _origSetAttr.call(this, name, value);
+  };
+
+  // Override .src setter for Image, Script, etc.
+  for (const Ctor of [HTMLImageElement, HTMLScriptElement, HTMLAudioElement, HTMLVideoElement, HTMLSourceElement, HTMLIFrameElement]) {
+    const desc = Object.getOwnPropertyDescriptor(Ctor.prototype, 'src');
+    if (desc && desc.set) {
+      const origSet = desc.set;
+      Object.defineProperty(Ctor.prototype, 'src', {
+        ...desc,
+        set(val) {
+          const resolved = __resolve(val);
+          if (resolved && __blobMap[resolved]) {
+            origSet.call(this, __blobMap[resolved]);
+          } else {
+            origSet.call(this, val);
+          }
+        }
+      });
+    }
+  }
+
+  // Override new Image() via MutationObserver for safety
+  const observer = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        const els = [node, ...node.querySelectorAll ? node.querySelectorAll('[src],[href]') : []];
+        for (const el of els) {
+          for (const attr of ['src', 'href']) {
+            const val = el.getAttribute && el.getAttribute(attr);
+            if (val) {
+              const resolved = __resolve(val);
+              if (resolved && __blobMap[resolved]) {
+                el[attr] = __blobMap[resolved];
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+})();
+<\\/script>
+`;
+
+  // Inject helper right after <head> or at the top of the document
+  if (html.includes('<head>')) {
+    html = html.replace('<head>', '<head>' + helperScript);
+  } else if (html.includes('<HEAD>')) {
+    html = html.replace('<HEAD>', '<HEAD>' + helperScript);
+  } else if (html.includes('<html>') || html.includes('<HTML>')) {
+    html = html.replace(/<html>/i, match => match + '<head>' + helperScript + '</head>');
+  } else {
+    html = helperScript + html;
+  }
+
+  const blob = new Blob([html], { type: 'text/html; charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  blobURLs.push(url);
+  return url;
+}
+
+// ── Open Folder ────────────────────────────────────────────
+openBtn.onclick = async () => {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'read' });
+    rootHandle = handle;
+    folderName.textContent = handle.name;
+
+    sidebarEmpty.style.display = 'none';
+    fileTree.style.display     = 'block';
+    fileTree.innerHTML         = '';
+
+    setStatus('ready', `📁 ${handle.name}`);
+    await renderDirectoryWithPath(handle, fileTree, 0, '');
+    toast(`Opened: ${handle.name}`);
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      toast('Could not open folder.', true);
+      console.error(err);
+    }
+  }
+};
+
+// ── File Tree ──────────────────────────────────────────────
+const FILE_ICONS = {
+  html: '🎮', htm: '🎮',
+  js:   '📜', mjs: '📜', ts: '📜',
+  css:  '🎨',
+  json: '🗃️', xml: '🗃️',
+  png:  '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
+  mp3:  '🔊', ogg: '🔊', wav: '🔊', flac: '🔊', m4a: '🔊',
+  mp4:  '🎬', webm: '🎬',
+  wasm: '⚙️',
+  ttf:  '🔤', woff: '🔤', woff2: '🔤', otf: '🔤',
+  txt:  '📄', md:   '📄',
+};
+
+function getIcon(name, kind) {
+  if (kind === 'directory') return '📁';
+  const ext = name.split('.').pop().toLowerCase();
+  return FILE_ICONS[ext] || '📄';
+}
+
+function isPlayable(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return ext === 'html' || ext === 'htm';
+}
+
+async function renderDirectoryWithPath(dirHandle, container, depth, basePath) {
+  const entries = [];
+  try {
+    for await (const [name, handle] of dirHandle.entries()) {
+      entries.push({ name, handle, kind: handle.kind });
+    }
+  } catch { return; }
+
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  for (const { name, handle, kind } of entries) {
+    const filePath = basePath ? `${basePath}/${name}` : name;
+    const node = document.createElement('div');
+    node.className = 'tree-node';
+
+    const row = document.createElement('div');
+    row.className = 'tree-row';
+    row.dataset.path = filePath;
+    row.style.paddingLeft = `${depth * 14 + 8}px`;
+
+    const chevron = document.createElement('span');
+    chevron.className = 'tree-chevron';
+    chevron.innerHTML = kind === 'directory' ? '▶' : '';
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'tree-icon';
+    iconEl.textContent = getIcon(name, kind);
+
+    const label = document.createElement('span');
+    label.className = 'tree-label' + (isPlayable(name) ? ' playable' : '');
+    label.textContent = name;
+
+    row.append(chevron, iconEl, label);
+    node.appendChild(row);
+
+    if (kind === 'directory') {
+      const children = document.createElement('div');
+      children.className = 'tree-children';
+      node.appendChild(children);
+
+      let loaded = false;
+      row.addEventListener('click', async () => {
+        const open = children.classList.toggle('open');
+        chevron.classList.toggle('open', open);
+        if (open && !loaded) {
+          loaded = true;
+          await renderDirectoryWithPath(handle, children, depth + 1, filePath);
+        }
+      });
+    } else {
+      row.addEventListener('click', () => {
+        activeRow?.classList.remove('active');
+        activeRow = row;
+        row.classList.add('active');
+      });
+
+      row.addEventListener('dblclick', () => launchGame(name, filePath));
+    }
+
+    container.appendChild(node);
+  }
+}
+
+// ── Launch Game ────────────────────────────────────────────
+async function launchGame(name, path) {
+  if (!rootHandle) { toast('Open a folder first.', true); return; }
+  if (!isPlayable(name)) { toast('Only HTML files can be launched.', true); return; }
+
+  // Show progress
+  setStatus('ready', `Loading ${name}…`);
+  progressBar.style.width = '10%';
+
+  try {
+    // Clean up previous blob URLs
+    cleanupBlobURLs();
+
+    // Step 1: Read all files from the root directory
+    progressBar.style.width = '20%';
+    const fileMap = await readAllFiles(rootHandle);
+    progressBar.style.width = '50%';
+
+    // Step 2: Create blob URLs for every file
+    const blobMap = buildBlobURLMap(fileMap);
+    progressBar.style.width = '70%';
+
+    // Step 3: Create the game HTML with rewritten paths
+    const gameBlobURL = await buildGameBlob(path, fileMap, blobMap);
+    progressBar.style.width = '90%';
+
+    if (!gameBlobURL) {
+      toast(`Could not find ${path}`, true);
+      progressBar.style.width = '0%';
+      return;
+    }
+
+    // Step 4: Load it in the iframe
+    currentGame = { name, path };
+    gameTitle.textContent = `🎮 ${path}`;
+    welcome.style.display    = 'none';
+    gameRunner.style.display = 'flex';
+
+    gameFrame.src = gameBlobURL;
+
+    progressBar.style.width = '100%';
+    setTimeout(() => { progressBar.style.width = '0%'; }, 500);
+
+    setStatus('ready', `Running: ${name}`);
+    toast(`Launched: ${name}`);
+
+  } catch (err) {
+    toast('Failed to load game: ' + err.message, true);
+    console.error('[GameVault] Launch error:', err);
+    progressBar.style.width = '0%';
+    setStatus('error', 'Launch failed');
+  }
+}
+
+// ── Game Controls ──────────────────────────────────────────
+$('refresh-btn').addEventListener('click', async () => {
+  if (currentGame) {
+    await launchGame(currentGame.name, currentGame.path);
+  }
+});
+
+$('fullscreen-btn').addEventListener('click', () => {
+  if (gameFrame.requestFullscreen) gameFrame.requestFullscreen();
+});
+
+$('close-btn').addEventListener('click', () => {
+  gameFrame.src = 'about:blank';
+  gameRunner.style.display = 'none';
+  welcome.style.display    = 'flex';
+  gameTitle.textContent    = 'No game loaded';
+  currentGame = null;
+  cleanupBlobURLs();
+  setStatus('ready', 'Ready');
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (!currentGame) return;
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'r' || e.key === 'R') $('refresh-btn').click();
+  if (e.key === 'f' || e.key === 'F') $('fullscreen-btn').click();
+});
+
+// ── Toast ──────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, isErr = false) {
+  const el = $('toast');
+  el.textContent = (isErr ? '⚠️ ' : '✓ ') + msg;
+  el.style.borderColor = isErr ? 'rgba(248,113,113,.4)' : 'rgba(52,211,153,.3)';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+</script>
+</body>
+</html>
