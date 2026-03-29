@@ -844,17 +844,16 @@ async function renderDirectoryWithPath(dirHandle, container, depth, basePath) {
 
     if (kind === 'directory') {
       const children = document.createElement('div');
-      children.className = 'tree-children';
+      children.className = 'tree-children open';
       node.appendChild(children);
+      chevron.classList.add('open');
 
-      let loaded = false;
-      row.addEventListener('click', async () => {
+      // Eagerly load all children so every file is visible immediately
+      await renderDirectoryWithPath(handle, children, depth + 1, filePath);
+
+      row.addEventListener('click', () => {
         const open = children.classList.toggle('open');
         chevron.classList.toggle('open', open);
-        if (open && !loaded) {
-          loaded = true;
-          await renderDirectoryWithPath(handle, children, depth + 1, filePath);
-        }
       });
     } else {
       row.addEventListener('click', () => {
